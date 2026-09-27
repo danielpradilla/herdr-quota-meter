@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="300" viewBox="0 0 1280 300" role="img" aria-labelledby="title desc">
+  <title id="title">Herdr quota meter tab-bar preview</title>
+  <desc id="desc">Illustrative Herdr tab row with the quota meter output at the right, using synthetic sample values.</desc>
+  <rect width="1280" height="300" rx="18" fill="#0c1118"/>
+  <rect x="1" y="1" width="1278" height="298" rx="17" fill="none" stroke="#2a3543" stroke-width="2"/>
+  <text x="42" y="43" fill="#98a6b8" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="14" letter-spacing="1.2">HERDR · TAB BAR COMMAND PREVIEW</text>
+  <rect x="24" y="64" width="1232" height="82" rx="12" fill="#171f2a" stroke="#2d3948"/>
+  <rect x="42" y="82" width="176" height="46" rx="8" fill="#263443"/>
+  <circle cx="62" cy="105" r="5" fill="#8ce0bd"/>
+  <text x="77" y="111" fill="#e7edf5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">workspace</text>
+  <rect x="230" y="82" width="142" height="46" rx="8" fill="#1b2530"/>
+  <text x="250" y="111" fill="#a8b5c5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="16">terminal</text>
+  <line x1="394" y1="82" x2="394" y2="128" stroke="#354253"/>
+  <text x="424" y="111" fill="#9be5c4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">claude 82%/5h 64%/7d</text>
+  <text x="690" y="111" fill="#66778a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">|</text>
+  <text x="716" y="111" fill="#9be5c4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">codex 42%/5h 71%/7d</text>
+  <text x="1003" y="111" fill="#66778a" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">|</text>
+  <text x="1027" y="111" fill="#9be5c4" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="17">copilot 65%/30d</text>
+  <text x="42" y="198" fill="#e7edf5" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="24" font-weight="600">Compact quota readout, right-aligned</text>
+  <text x="42" y="229" fill="#98a6b8" font-family="Inter, -apple-system, BlinkMacSystemFont, sans-serif" font-size="16">Refreshes on Herdr's configured interval · quota-axi supplies local provider data</text>
+  <rect x="42" y="251" width="211" height="28" rx="14" fill="#352c1e"/>
+  <text x="57" y="270" fill="#f1c879" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12" letter-spacing=".7">ILLUSTRATIVE · SAMPLE DATA</text>
+</svg>

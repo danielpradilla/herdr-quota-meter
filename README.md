@@ -2,6 +2,10 @@
 
 A local Herdr plugin wrapper around [`quota-axi`](https://github.com/kunchenguid/quota-axi). It can open a live quota pane and prepare a command for Herdr's right side of the tab bar.
 
+![Illustrative tab-bar preview with synthetic sample quota values](assets/quota-meter-preview.svg)
+
+This is a preview, not a live desktop capture; the displayed percentages are synthetic.
+
 ## Requirements
 
 - Herdr 0.9.1 or newer.
