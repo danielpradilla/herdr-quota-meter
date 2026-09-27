@@ -1,0 +1,20 @@
+id = "quota-meter"
+name = "Quota meter"
+version = "0.1.0"
+description = "Show local LLM subscription quota windows in a pane or tab-bar command."
+min_herdr_version = "0.9.1"
+platforms = ["linux", "macos"]
+
+[[panes]]
+id = "quota"
+title = "Quota meter"
+placement = "popup"
+width = 38
+height = 16
+command = ["python3", "meter.py", "--all"]
+
+[[actions]]
+id = "configure-status"
+title = "Prepare tab-bar status command"
+description = "Copy the meter to a stable per-plugin config path and print a config stanza; does not edit Herdr config."
+command = ["python3", "setup_status.py"]
