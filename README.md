@@ -15,14 +15,21 @@ This is a preview, not a live desktop capture; the displayed percentages are syn
 
 ## Install and open the pane
 
-This checkout is not published yet. For local development, link it and open its pane:
+Install the published plugin from GitHub and open its pane:
+
+```sh
+herdr plugin install danielpradilla/herdr-quota-meter
+herdr plugin pane open --plugin quota-meter --entrypoint quota
+```
+
+For local development from a checkout, link it instead:
 
 ```sh
 herdr plugin link /absolute/path/to/herdr-quota-meter
 herdr plugin pane open --plugin quota-meter --entrypoint quota
 ```
 
-To distribute it through Herdr's marketplace, publish this directory in a public GitHub repository, add the `herdr-plugin` repository topic, and install using that repository's `owner/repo` path.
+To list it in Herdr's marketplace, add the `herdr-plugin` topic to the GitHub repository.
 
 The pane refreshes every 60 seconds. It defaults to all providers. It invokes quota-axi with `--json`; provider requests follow quota-axi's documented read behavior and local authentication setup.
 
