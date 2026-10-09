@@ -8,10 +8,18 @@ provider endpoints. It polls quota-axi and renders a compact box (for a
 dedicated pane) or single line (for Herdr's tab_bar_right command entries).
 Credential handling and any provider CLI refresh behavior belong to
 quota-axi; this script never reads credentials itself.
+
+Kiro is not a quota-axi provider, so it is read separately through the
+official `kiro-cli` binary's `/usage` command (see fetch_kiro).
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
+import os
+from pathlib import Path
+import re
+import shutil
 import subprocess
 import sys
 import time
@@ -26,7 +34,172 @@ QUOTA_AXI_VERSION = "0.1.55"
 QUOTA_AXI_TIMEOUT = 20
 
 
+KIRO_PROVIDER = "kiro"
+KIRO_CLI = "kiro-cli"
+KIRO_USAGE_TIMEOUT = 12
+KIRO_CLEANUP_TIMEOUT = 5
+# Whole Kiro read (usage + session cleanup) stays inside this budget so the
+# meter finishes within Herdr's status-command timeout (25s by default).
+KIRO_BUDGET = 18
+# Kiro credits move slowly and each read spawns kiro-cli (~3s), so a
+# successful reading is reused for this many seconds.
+KIRO_MAX_AGE = int(os.environ.get("QUOTA_METER_KIRO_MAX_AGE", "300"))
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "herdr-quota-meter"
+KIRO_CACHE = CACHE_DIR / "kiro.json"
+# `kiro-cli chat` saves an (empty) session per invocation, scoped to its cwd.
+# Running it from a dedicated directory keeps those out of real project
+# session lists and lets cleanup delete them without touching anything else.
+KIRO_WORKDIR = CACHE_DIR / "kiro-cwd"
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
+# e.g. "Credits (12.60 of 1000 covered in plan), 1.3%"
+KIRO_CREDITS_RE = re.compile(r"Credits\s*\(\s*([\d.,]+)\s+of\s+([\d.,]+)\s+covered in plan\s*\)", re.I)
+# e.g. "Estimated Usage | resets on 2026-11-01 | KIRO PRO"
+KIRO_RESET_RE = re.compile(r"resets on\s+(\d{4}-\d{2}-\d{2})", re.I)
+
+
+def _num(text):
+    return float(text.replace(",", ""))
+
+
+def parse_kiro_usage(text):
+    """Turn `kiro-cli chat --no-interactive /usage` output into a provider
+    entry shaped like quota-axi's, so render/render_line need no special case."""
+    text = ANSI_RE.sub("", text)
+    provider = {"provider": KIRO_PROVIDER, "state": {}, "windows": []}
+    m = KIRO_CREDITS_RE.search(text)
+    if not m:
+        lowered = text.lower()
+        if "login" in lowered or "log in" in lowered or "not logged" in lowered:
+            provider["state"] = {"status": "auth_required", "remedyCommand": "kiro-cli login"}
+        else:
+            snippet = " ".join(text.split())[:80] or "empty /usage output"
+            provider["state"] = {"status": "error", "error": f"unparsed kiro usage: {snippet}"}
+        return provider
+
+    used, limit = _num(m.group(1)), _num(m.group(2))
+    remaining = max(0.0, 100.0 - used / limit * 100.0) if limit > 0 else 0.0
+    window = {
+        "id": "credits",
+        "kind": "monthly",
+        "label": "credits",
+        "percentRemaining": round(remaining),
+        "used": used,
+        "limit": limit,
+    }
+    r = KIRO_RESET_RE.search(text)
+    if r:
+        window["resetsAt"] = f"{r.group(1)}T00:00:00Z"
+    provider["state"] = {"status": "ok"}
+    provider["windows"] = [window]
+    return provider
+
+
+def _cleanup_kiro_sessions(deadline):
+    """Delete the empty sessions our /usage calls left in KIRO_WORKDIR. Only
+    sessions with zero messages in that dedicated cwd are removed. Stops at
+    `deadline`; anything left over is removed on a later run."""
+    def time_left():
+        return deadline - time.monotonic() >= KIRO_CLEANUP_TIMEOUT
+
+    if not time_left():
+        return
+    try:
+        proc = subprocess.run(
+            [KIRO_CLI, "chat", "--list-sessions", "--format", "json"],
+            cwd=KIRO_WORKDIR, capture_output=True, text=True, timeout=KIRO_CLEANUP_TIMEOUT,
+        )
+        envelopes = json.loads(proc.stdout)
+    except Exception:
+        return
+    ids = [
+        s.get("sessionId")
+        for env in envelopes if env.get("cwd") == str(KIRO_WORKDIR)
+        for s in env.get("sessions", [])
+        if s.get("messageCount") == 0 and s.get("sessionId")
+    ]
+    for sid in ids:
+        if not time_left():
+            return
+        try:
+            subprocess.run(
+                [KIRO_CLI, "chat", "--delete-session", sid],
+                cwd=KIRO_WORKDIR, capture_output=True, timeout=KIRO_CLEANUP_TIMEOUT,
+            )
+        except Exception:
+            return
+
+
+def fetch_kiro():
+    """Read Kiro credit usage via the official CLI. Always returns a provider
+    entry; failures are reported through its state like quota-axi does."""
+    try:
+        cached = json.loads(KIRO_CACHE.read_text(encoding="utf-8"))
+        if time.time() - cached.get("fetchedAt", 0) < KIRO_MAX_AGE:
+            return cached["provider"]
+    except Exception:
+        pass
+
+    if not shutil.which(KIRO_CLI):
+        return {"provider": KIRO_PROVIDER, "windows": [],
+                "state": {"status": "unavailable", "error": "kiro-cli not found on PATH"}}
+    deadline = time.monotonic() + KIRO_BUDGET
+    try:
+        KIRO_WORKDIR.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            [KIRO_CLI, "chat", "--no-interactive", "/usage"],
+            cwd=KIRO_WORKDIR, capture_output=True, text=True,
+            timeout=KIRO_USAGE_TIMEOUT, stdin=subprocess.DEVNULL,
+        )
+        provider = parse_kiro_usage(proc.stdout + "\n" + proc.stderr)
+    except Exception as e:
+        provider = {"provider": KIRO_PROVIDER, "windows": [],
+                    "state": {"status": "error", "error": f"kiro-cli failed: {e}"[:120]}}
+    finally:
+        if KIRO_WORKDIR.is_dir():
+            _cleanup_kiro_sessions(deadline)
+
+    if provider["state"].get("status") == "ok":
+        try:
+            KIRO_CACHE.write_text(json.dumps({"fetchedAt": time.time(), "provider": provider}), encoding="utf-8")
+        except Exception:
+            pass
+    return provider
+
+
 def fetch_quota(env=None, providers_filter=None):
+    """Fetch quota-axi providers and, when requested, Kiro, in parallel.
+    providers_filter=None means "all": every quota-axi provider plus Kiro if
+    kiro-cli is installed."""
+    if providers_filter is None:
+        want_kiro = shutil.which(KIRO_CLI) is not None
+        axi_filter, want_axi = None, True
+    else:
+        want_kiro = KIRO_PROVIDER in providers_filter
+        axi_filter = [p for p in providers_filter if p != KIRO_PROVIDER]
+        want_axi = bool(axi_filter)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        kiro_future = pool.submit(fetch_kiro) if want_kiro else None
+        if want_axi:
+            data, error = fetch_quota_axi(env=env, providers_filter=axi_filter)
+        else:
+            data, error = {"providers": []}, None
+        kiro = kiro_future.result() if kiro_future else None
+
+    if error or kiro is None:
+        return data, error
+    providers = list(data.get("providers", []))
+    # Keep the user's requested order (e.g. --providers kiro,codex).
+    order = providers_filter or []
+    idx = order.index(KIRO_PROVIDER) if KIRO_PROVIDER in order else len(providers)
+    after = set(order[idx + 1:])
+    insert_at = next((i for i, p in enumerate(providers) if p.get("provider") in after), len(providers))
+    providers.insert(insert_at, kiro)
+    return {**data, "providers": providers}, None
+
+
+def fetch_quota_axi(env=None, providers_filter=None):
     command = [
         "npx", "--yes", f"--package=quota-axi@{QUOTA_AXI_VERSION}",
         "quota-axi", "--json",
@@ -167,7 +340,7 @@ def render(data, error, providers_filter=None):
     return "\n".join(lines)
 
 
-DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "commandcode"]
+DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "commandcode", "kiro"]
 
 
 # Default: show every window kind a provider reports, no filtering.
@@ -238,7 +411,7 @@ def render_line(data, error, providers_filter=None, window_kinds=DEFAULT_WINDOW_
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--interval", type=int, default=60, help="Refresh interval in seconds, for --loop (default: 60).")
-    ap.add_argument("--all", action="store_true", help="Show every provider quota-axi supports.")
+    ap.add_argument("--all", action="store_true", help="Show every provider quota-axi supports, plus Kiro if kiro-cli is installed.")
     ap.add_argument("--providers", help="Comma-separated provider list to show (overrides --all/default).")
     ap.add_argument("--line", action="store_true", help="Print one compact line instead of a box (for a status-bar slot).")
     ap.add_argument("--loop", action="store_true", help="Keep refreshing (the boxed pane view always loops; --line defaults to a single one-shot print unless this is set).")

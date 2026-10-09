@@ -47,7 +47,16 @@ herdr config check
 herdr server reload-config
 ```
 
-The project includes `providers.txt` with `claude,codex,copilot,commandcode`, matching the providers in your current Herdr tab-bar command. On first setup, the action copies it into Herdr's persistent plugin config directory; later runs preserve that per-user file. Edit the copy returned by `herdr plugin config-dir quota-meter` to change the display; use `all` for every provider supported by quota-axi 0.1.55. Its provider IDs are `claude`, `codex`, `cursor`, `copilot`, `grok`, `kimi`, `zai`, `agy`, `alibaba`, `opencode-go`, `commandcode`, `minimax`, `mimo`, `deepseek`, `openrouter`, `elevenlabs`, `devin`, and `muse`. New provider implementations come from quota-axi; update `QUOTA_AXI_VERSION` and this ID list when a later release adds providers.
+The project includes `providers.txt` with `claude,codex,copilot,commandcode,kiro`, matching the providers in your current Herdr tab-bar command. On first setup, the action copies it into Herdr's persistent plugin config directory; later runs preserve that per-user file. Edit the copy returned by `herdr plugin config-dir quota-meter` to change the display; use `all` for every provider supported by quota-axi 0.1.55. Its provider IDs are `claude`, `codex`, `cursor`, `copilot`, `grok`, `kimi`, `zai`, `agy`, `alibaba`, `opencode-go`, `commandcode`, `minimax`, `mimo`, `deepseek`, `openrouter`, `elevenlabs`, `devin`, and `muse`. New provider implementations come from quota-axi; update `QUOTA_AXI_VERSION` and this ID list when a later release adds providers.
+
+## Kiro
+
+quota-axi does not support Kiro, so the meter reads it itself through the official [`kiro-cli`](https://kiro.dev) binary (`kiro-cli chat --no-interactive /usage`). It shows the month's credit allowance as `kiro 98%/30d`. Requirements and behavior:
+
+- `kiro-cli` must be on `PATH` and logged in (`kiro-cli login`). `--all` includes Kiro only when `kiro-cli` is installed.
+- A successful reading is cached in `~/.cache/herdr-quota-meter/kiro.json` for 300 seconds (override with `QUOTA_METER_KIRO_MAX_AGE`), because each read spawns `kiro-cli`.
+- Every `kiro-cli chat` call saves an empty session. The meter runs it from `~/.cache/herdr-quota-meter/kiro-cwd` and afterwards deletes only zero-message sessions in that directory, so your project session lists are untouched.
+- Credits used beyond the plan allowance show as `0%`.
 
 ## Data and credentials
 
