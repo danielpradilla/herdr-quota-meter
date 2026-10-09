@@ -47,7 +47,7 @@ herdr config check
 herdr server reload-config
 ```
 
-The project includes `providers.txt` with `claude,codex,copilot,commandcode,kiro`, matching the providers in your current Herdr tab-bar command. On first setup, the action copies it into Herdr's persistent plugin config directory; later runs preserve that per-user file. Edit the copy returned by `herdr plugin config-dir quota-meter` to change the display; use `all` for every provider supported by quota-axi 0.1.55. Its provider IDs are `claude`, `codex`, `cursor`, `copilot`, `grok`, `kimi`, `zai`, `agy`, `alibaba`, `opencode-go`, `commandcode`, `minimax`, `mimo`, `deepseek`, `openrouter`, `elevenlabs`, `devin`, and `muse`. New provider implementations come from quota-axi; update `QUOTA_AXI_VERSION` and this ID list when a later release adds providers.
+The project includes `providers.txt` with `claude,codex,copilot,kiro`. On first setup, the action copies it into Herdr's persistent plugin config directory; later runs preserve that per-user file. Edit the copy returned by `herdr plugin config-dir quota-meter` to change the display; use `all` for every provider supported by quota-axi 0.1.55. See quota-axi's documentation for supported provider IDs. New provider implementations come from quota-axi; update `QUOTA_AXI_VERSION` when adopting a later release.
 
 ## Kiro
 
@@ -60,7 +60,7 @@ quota-axi does not support Kiro, so the meter reads it itself through the offici
 
 ## Data and credentials
 
-The meter does not itself read or write credentials, and does not relay OMP's Command Code key from `~/.omp/agent/agent.db`. It passes inherited environment variables to quota-axi, which may read provider credential files or secure stores and may delegate a refresh to a provider's own CLI under its documented conditions. No credentials are written into plugin files. Review quota-axi's [safety guarantees](https://github.com/kunchenguid/quota-axi#safety-guarantees) and provider-specific behavior before use.
+The meter does not itself read or write credentials. It passes inherited environment variables to quota-axi, which may read provider credential files or secure stores and may delegate a refresh to a provider's own CLI under its documented conditions. No credentials are written into plugin files. Review quota-axi's [safety guarantees](https://github.com/kunchenguid/quota-axi#safety-guarantees) and provider-specific behavior before use.
 
 ## Remove
 

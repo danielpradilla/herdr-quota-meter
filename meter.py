@@ -243,22 +243,11 @@ def fmt_relative(iso_ts):
 
 INNER = 32  # visible content width between the two box-drawing borders
 
-# A status entry is narrow and read at a glance, so long provider ids get a
-# short display alias. Filtering (--providers, --exclude-ids) still uses the
-# full quota-axi id; only what is drawn changes.
-PROVIDER_LABELS = {"commandcode": "cmd"}
-
-
-def display_name(provider):
-    return PROVIDER_LABELS.get(provider, provider)
-
-
 # A provider quota-axi could not read still gets reported; "NA" alone hides
 # whether it is signed out, waiting on a Keychain consent dialog, or simply
 # returning nothing. Tags are one word because a status-bar slot is narrow.
 # `state.error` is quota-axi's specific reason, `state.status` the fallback.
 UNREADABLE_ERROR_TAGS = {
-    "commandcode_sign_in_required": "auth?",
     "keychain_prompt_required": "key?",
     "keychain_prompt_timeout": "key?",
     "credentials_keyring_storage": "key?",
@@ -306,7 +295,7 @@ def render(data, error, providers_filter=None):
             lines.append(_row("no matching providers"))
 
         for p in providers:
-            name = display_name(p.get("provider", "?"))
+            name = p.get("provider", "?")
             state = p.get("state", {})
 
             tag = unreadable_tag(state)
@@ -340,7 +329,7 @@ def render(data, error, providers_filter=None):
     return "\n".join(lines)
 
 
-DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "commandcode", "kiro"]
+DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "kiro"]
 
 
 # Default: show every window kind a provider reports, no filtering.
@@ -382,7 +371,7 @@ def render_line(data, error, providers_filter=None, window_kinds=DEFAULT_WINDOW_
 
     parts = []
     for p in providers:
-        name = display_name(p.get("provider", "?"))
+        name = p.get("provider", "?")
         state = p.get("state", {})
         tag = unreadable_tag(state)
         if tag:

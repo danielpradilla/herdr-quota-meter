@@ -1,1 +1,1 @@
-claude,codex,copilot,commandcode,kiro
+claude,codex,copilot,kiro
