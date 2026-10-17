@@ -33,10 +33,20 @@ The pane refreshes every 60 seconds. It defaults to all providers. It invokes qu
 
 ## Quotas tab: reset times
 
-`reset_tab.py` shows one line per account, with each quota window's countdown
-and local reset date/time. It refreshes every 60 seconds without changing the
-main tab-bar status. Missing provider timestamps appear as `reset unknown`;
-the viewer never guesses them.
+`reset_tab.py` is a standard-library curses dashboard: horizontal bars show
+remaining quota on a fixed 0–100% scale, with one countdown per quota window
+and its local reset date/time. Countdowns tick in seconds and stop at zero;
+zero never implies the provider has replenished its quota.
+
+Accounts stay on one row when space allows; narrow terminals stack their
+windows. Bars use green above 30%, yellow at 16–30%, and red at 15% or below.
+Unknown remaining quota uses question marks, not an empty bar. Missing reset
+timestamps appear as `reset unknown`; the viewer never guesses them.
+
+Provider reads run in the background every 60 seconds, so countdowns keep
+ticking during network calls. The header shows reading age and refresh state;
+a failed refresh labels the retained last successful quotas as stale.
+The main tab-bar status is unchanged.
 
 From a checkout, create a tab in your current workspace:
 
@@ -50,8 +60,9 @@ Use the returned `root_pane.pane_id` as `<pane-id>` to start the viewer:
 herdr pane run <pane-id> "python3 '$PWD/reset_tab.py'"
 ```
 
-Click the Quotas tab to view it; Ctrl+C stops refreshing. No new shortcut or
-custom Herdr build is needed. `--once` prints a single snapshot.
+Click the Quotas tab to view it; `q` or Ctrl+C stops the dashboard. No new
+global shortcut or custom Herdr build is needed. `--once` prints a plain-text
+snapshot. Python must include curses support (standard on macOS/Linux).
 
 By default, the viewer uses this checkout's `meter.py` and its default provider
 list. `--meter /absolute/path/to/reader.py` reuses a customized local reader
