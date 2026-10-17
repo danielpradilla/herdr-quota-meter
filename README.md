@@ -31,6 +31,37 @@ To list it in Herdr's marketplace, add the `herdr-plugin` topic to the GitHub re
 
 The pane refreshes every 60 seconds. It defaults to all providers. It invokes quota-axi with `--json`; provider requests follow quota-axi's documented read behavior and local authentication setup.
 
+## Quotas tab: reset times
+
+`reset_tab.py` shows one line per account, with each quota window's countdown
+and local reset date/time. It refreshes every 60 seconds without changing the
+main tab-bar status. Missing provider timestamps appear as `reset unknown`;
+the viewer never guesses them.
+
+From a checkout, create a tab in your current workspace:
+
+```sh
+herdr tab create --workspace "$HERDR_WORKSPACE_ID" --cwd "$PWD" --label Quotas --no-focus
+```
+
+Use the returned `root_pane.pane_id` as `<pane-id>` to start the viewer:
+
+```sh
+herdr pane run <pane-id> "python3 '$PWD/reset_tab.py'"
+```
+
+Click the Quotas tab to view it; Ctrl+C stops refreshing. No new shortcut or
+custom Herdr build is needed. `--once` prints a single snapshot.
+
+By default, the viewer uses this checkout's `meter.py` and its default provider
+list. `--meter /absolute/path/to/reader.py` reuses a customized local reader
+without copying credentials or changing the installed status command. The reader
+must expose `DEFAULT_PROVIDERS` and `fetch_quota(env=None)` returning
+`(data, error)` in the meter's provider/window schema; an optional
+`quota_env(providers)` supplies its existing credential environment. Named
+accounts in that data remain separate rows. Run the focused regression check
+with `python3 -m unittest test_reset_tab`.
+
 ## Show the meter in the top-right tab bar
 
 Herdr plugin v1 does not let a manifest add native tab-bar items. Invoke the plugin action; it copies `meter.py` into the plugin's persistent config directory and prints the config stanza to the plugin command log:
