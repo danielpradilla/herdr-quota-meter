@@ -1,37 +1,140 @@
 # Herdr quota meter
 
-A local Herdr plugin wrapper around [`quota-axi`](https://github.com/kunchenguid/quota-axi). It can open a live quota pane and prepare a command for Herdr's right side of the tab bar.
+Show your remaining AI subscription quotas in Herdr, either in a pane or in the top-right tab bar. The meter uses [`quota-axi`](https://github.com/kunchenguid/quota-axi) to read quotas with your existing local provider sign-ins. It reads Kiro separately through `kiro-cli`.
 
 ![Live Herdr tab bar with the quota meter](assets/herdr-quota-status.png)
 
 ## Requirements
 
 - Herdr 0.9.1 or newer.
-- Python 3 and Node.js 22.19 or newer (`npx`); the meter installs/runs pinned `quota-axi@0.1.55` through npx.
-- Provider CLI/account credentials already configured locally. The meter does not read or copy credentials itself. `quota-axi` reads its supported local provider sources; secure-store reads may require a separate interactive approval as described by its documentation.
+- Python 3 and Node.js 22.19 or newer, including `npx`. The meter downloads and runs `quota-axi@0.1.55` through `npx`.
+- Sign in to the providers you want to track on the same machine and as the same user that runs Herdr. Selecting a provider does not sign you in.
 - Herdr plugin commands run as the local user and are not sandboxed. Review the manifest and scripts before installing.
 
-## Install and open the pane
+## 1. Install the plugin
 
-Install the published plugin from GitHub and open its pane:
+Install the published plugin from GitHub:
 
 ```sh
 herdr plugin install danielpradilla/herdr-quota-meter
-herdr plugin pane open --plugin quota-meter --entrypoint quota
 ```
 
 For local development from a checkout, link it instead:
 
 ```sh
 herdr plugin link /absolute/path/to/herdr-quota-meter
+```
+
+## 2. Connect your existing provider sign-ins
+
+You do not need to copy tokens into the plugin. The meter reuses the local sign-ins that `quota-axi` supports.
+
+| Provider | ID to use in the meter | Local sign-in source |
+| --- | --- | --- |
+| Claude Code | `claude` | Claude Code credentials or macOS Keychain. The default credential file is `~/.claude/.credentials.json`. |
+| Codex | `codex` | Codex login in `~/.codex/auth.json`, supported Pi sign-ins, or the Codex CLI. |
+| GitHub Copilot | `copilot` | Copilot `apps.json`, the Copilot CLI secure store on macOS, or a token in the GitHub CLI's `hosts.yml`. A GitHub CLI login alone does not guarantee access. |
+| Cursor | `cursor` | Cursor editor sign-in or supported `cursor-agent` credentials. |
+| Kiro | `kiro` | `kiro-cli` installed on `PATH` and signed in with `kiro-cli login`. |
+
+For other providers and custom credential locations, see the [provider documentation for quota-axi 0.1.55](https://unpkg.com/quota-axi@0.1.55/README.md).
+
+Inspect which sign-ins quota-axi can find without printing secret values:
+
+```sh
+npx --yes --package=quota-axi@0.1.55 quota-axi auth
+```
+
+This command does not inspect Kiro. If you use Kiro, sign in through `kiro-cli` separately.
+
+If a provider needs secure-store access, run this in an interactive terminal. Replace the provider list with your own quota-axi provider IDs:
+
+```sh
+npx --yes --package=quota-axi@0.1.55 quota-axi --provider claude,copilot --allow-keychain-prompt
+```
+
+Review and approve the access request yourself. On macOS, quota-axi documents using "Always Allow" for later background reads. The meter does not request approval itself. Do not include `kiro` in quota-axi commands.
+
+The meter inherits its process environment. If your setup uses custom locations such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, Herdr must receive those variables too. Variables set only in another terminal do not reach an already-running Herdr process.
+
+## 3. Open the quota pane
+
+```sh
 herdr plugin pane open --plugin quota-meter --entrypoint quota
 ```
 
-To list it in Herdr's marketplace, add the `herdr-plugin` topic to the GitHub repository.
+The pane refreshes every 60 seconds and requests all supported providers. Kiro is included only when `kiro-cli` is on `PATH`. This is not a scan of Herdr's configured agents: quota-axi uses its own supported local sign-in sources.
 
-The pane refreshes every 60 seconds. It defaults to all providers. It invokes quota-axi with `--json`; provider requests follow quota-axi's documented read behavior and local authentication setup.
+The provider list for the tab bar is separate. Follow the next section to show only the providers you use.
 
-## Quotas tab: reset times
+## 4. Choose providers for the tab bar
+
+First, prepare the status command and find its persistent configuration directory:
+
+```sh
+herdr plugin action invoke quota-meter.configure-status --plugin quota-meter
+herdr plugin log list --plugin quota-meter
+herdr plugin config-dir quota-meter
+```
+
+Open `providers.txt` inside the directory returned by the last command. On first setup, it contains:
+
+```text
+claude,codex,copilot,kiro
+```
+
+Replace that line with the IDs of the providers you use, separated by commas. For example, for Claude Code and Codex:
+
+```text
+claude,codex
+```
+
+Use `claude,codex,cursor` to include Cursor, or `all` to request every supported provider, plus Kiro when installed. Adding an ID only selects that provider. Its local sign-in must still be available.
+
+Now run the setup action again to generate a command with your chosen providers:
+
+```sh
+herdr plugin action invoke quota-meter.configure-status --plugin quota-meter
+herdr plugin log list --plugin quota-meter
+```
+
+Copy the latest printed `[[ui.tab_bar_right]]` block into the `[ui]` section of `~/.config/herdr/config.toml`. Keep it before any subsequent non-`ui` table. If you already have a quota-meter block, replace it instead of adding a duplicate. Then validate and apply the configuration:
+
+```sh
+herdr config check
+herdr server reload-config
+```
+
+The meter refreshes every 60 seconds. It shows percent remaining, with `/5h`, `/7d`, or `/30d` labels for session, weekly, or monthly quotas. `/30d` is a display label, not an exact month length.
+
+After changing providers, repeat the setup action, replace the command block, and reload Herdr. The generated command contains the provider list. It does not read `providers.txt` on each refresh. Later setup runs preserve your saved provider list.
+
+Herdr plugin v1 cannot add native tab-bar items from a manifest. The setup action copies `meter.py` to the persistent plugin configuration directory and prints the block. It does not edit Herdr's configuration or reload it.
+
+## Troubleshoot missing quotas
+
+From a checkout, test your selected providers with a single read:
+
+```sh
+python3 meter.py --line --providers claude,codex
+```
+
+Replace `claude,codex` with your provider list. To keep a detailed pane open in that terminal, omit `--line`. Press Ctrl+C to stop it.
+
+| Display or problem | What to do |
+| --- | --- |
+| `auth?` | Sign in through the provider's own CLI or app, then rerun the meter. |
+| `key?` | Inspect the detailed pane or `quota-axi auth`. Grant access interactively if required. A GitHub CLI token stored only in its keyring is not a supported `hosts.yml` token source. |
+| `env?` | Inspect the detailed error and the upstream provider documentation for an unsupported credential selection. |
+| `err?`, `NA`, or `no data` | Inspect the detailed pane or run quota-axi with `--provider YOUR_IDS --json` for the provider's error. Read Kiro through `kiro-cli` instead. |
+| Works in a terminal, but not in Herdr | Make sure that Herdr can find Python, Node.js, `npx`, and any required provider CLI on its `PATH`. Compare the credential-location environment variables too. |
+| Tab bar still shows the old providers | Regenerate the status command, replace the existing block, and reload Herdr as described above. |
+
+`providers.txt` controls the generated tab-bar command only. It does not change the plugin pane's `--all` selection or the reset dashboard's default provider list.
+
+New quota-axi provider implementations require a version that supports them. This project pins `QUOTA_AXI_VERSION` in `meter.py` to `0.1.55`.
+
+## Optional: Quotas tab with reset countdowns
 
 `reset_tab.py` is a standard-library curses dashboard: horizontal bars show
 remaining quota on a fixed 0–100% scale, with one countdown per quota window
@@ -73,23 +176,6 @@ must expose `DEFAULT_PROVIDERS` and `fetch_quota(env=None)` returning
 accounts in that data remain separate rows. Run the focused regression check
 with `python3 -m unittest test_reset_tab`.
 
-## Show the meter in the top-right tab bar
-
-Herdr plugin v1 does not let a manifest add native tab-bar items. Invoke the plugin action; it copies `meter.py` into the plugin's persistent config directory and prints the config stanza to the plugin command log:
-
-```sh
-herdr plugin action invoke quota-meter.configure-status --plugin quota-meter
-herdr plugin log list --plugin quota-meter
-```
-
-Copy the printed `[[ui.tab_bar_right]]` block under your existing `[ui]` configuration in `~/.config/herdr/config.toml`, then validate and apply it yourself:
-
-```sh
-herdr config check
-herdr server reload-config
-```
-
-The project includes `providers.txt` with `claude,codex,copilot,kiro`. On first setup, the action copies it into Herdr's persistent plugin config directory; later runs preserve that per-user file. Edit the copy returned by `herdr plugin config-dir quota-meter` to change the display; use `all` for every provider supported by quota-axi 0.1.55. See quota-axi's documentation for supported provider IDs. New provider implementations come from quota-axi; update `QUOTA_AXI_VERSION` when adopting a later release.
 
 ## Kiro
 
