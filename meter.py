@@ -7,10 +7,15 @@ Wraps quota-axi, a local-first CLI that reports LLM subscription quota windows f
 provider endpoints. It polls quota-axi and renders a compact box (for a
 dedicated pane) or single line (for Herdr's tab_bar_right command entries).
 Credential handling and any provider CLI refresh behavior belong to
-quota-axi; this script never reads credentials itself.
+quota-axi; this script reads a credential only where quota-axi cannot.
 
-Kiro is not a quota-axi provider, so it is read separately through the
-official `kiro-cli` binary's `/usage` command (see fetch_kiro).
+Two providers are read directly:
+- Kiro is not a quota-axi provider, so it goes through the official
+  `kiro-cli` binary's `/usage` command (see fetch_kiro).
+- OpenCode Go keeps one credential for the whole OpenCode Console integration
+  (Go and Zen share it), while quota-axi only accepts a separate `opencode-go`
+  credential row. fetch_opencode_go reads the credential opencode itself would
+  use and asks the vendor's Go usage endpoint.
 """
 
 import argparse
@@ -20,11 +25,13 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 import textwrap
+import urllib.request
 
 WARN_THRESHOLD = 15  # percent remaining at/below this gets a warning marker
 
@@ -50,6 +57,16 @@ KIRO_CACHE = CACHE_DIR / "kiro.json"
 # Running it from a dedicated directory keeps those out of real project
 # session lists and lets cleanup delete them without touching anything else.
 KIRO_WORKDIR = CACHE_DIR / "kiro-cwd"
+
+OPENCODE_GO_PROVIDER = "opencode-go"
+OPENCODE_DB = Path.home() / ".local/share/opencode/opencode.db"
+# opencode v2 keeps one credential per integration and serves the Go plan from
+# the "opencode" (OpenCode Console) one; "opencode-go" stays first in case a
+# later opencode stores the plan separately.
+OPENCODE_GO_INTEGRATIONS = ("opencode-go", "opencode")
+OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+# Whole OpenCode Go read stays inside Herdr's status-command timeout.
+OPENCODE_GO_TIMEOUT = 8
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 # e.g. "Credits (12.60 of 1000 covered in plan), 1.3%"
@@ -130,6 +147,75 @@ def _cleanup_kiro_sessions(deadline):
             return
 
 
+def opencode_go_key():
+    """Return the key opencode itself would send for the OpenCode Console
+    integration, read-only from its SQLite store (the `opencode` row that also
+    carries the Go plan). None when signed out or the store is unreadable."""
+    try:
+        with sqlite3.connect(f"file:{OPENCODE_DB}?mode=ro", uri=True) as db:
+            row = db.execute(
+                "select value from credential where integration_id in (?, ?)"
+                " order by active desc, time_created desc, id desc limit 1",
+                OPENCODE_GO_INTEGRATIONS,
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+    try:
+        entry = json.loads(row[0]) if row else None
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(entry, dict) or entry.get("type") != "key":
+        return None
+    return entry.get("key") or None
+
+
+def parse_opencode_go_usage(usage):
+    """The vendor reports consumption per window; the meter draws what is left.
+    Labels stay short because the boxed pane is only 32 columns wide."""
+    windows = []
+    for field, window_id, kind, label in (
+        ("rolling", "five_hour", "session", "5h"),
+        ("weekly", "weekly", "weekly", "week"),
+        ("monthly", "monthly", "monthly", "month"),
+    ):
+        record = usage.get(field) or {}
+        used = record.get("percent")
+        if not isinstance(used, (int, float)):
+            continue
+        windows.append({
+            "id": window_id, "kind": kind, "label": label,
+            "percentRemaining": max(0, min(100, 100 - used)),
+            "resetsAt": record.get("resetsAt"),
+        })
+    return windows
+
+
+def fetch_opencode_go():
+    """Always returns a provider entry; failures land in `state` like the rest."""
+    entry = {"provider": OPENCODE_GO_PROVIDER, "windows": [], "state": {}}
+    key = opencode_go_key()
+    if not key:
+        entry["state"] = {
+            "status": "auth_required", "error": "opencode_go_credential_unavailable",
+            "remedyCommand": "opencode auth login opencode",
+        }
+        return entry
+    request = urllib.request.Request(OPENCODE_GO_USAGE_URL, headers={
+        "Authorization": f"Bearer {key}", "Accept": "application/json",
+        # The vendor answers 403 to urllib's default agent, so name ourselves.
+        "User-Agent": "herdr-quota-meter/1.0",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=OPENCODE_GO_TIMEOUT) as response:
+            usage = json.load(response).get("usage") or {}
+    except Exception as e:
+        entry["state"] = {"status": "error", "error": f"Go usage read failed: {e}"[:200]}
+        return entry
+    entry["windows"] = parse_opencode_go_usage(usage)
+    entry["state"] = {"status": "ok" if entry["windows"] else "unavailable"}
+    return entry
+
+
 def fetch_kiro():
     """Read Kiro credit usage via the official CLI. Always returns a provider
     entry; failures are reported through its state like quota-axi does."""
@@ -167,35 +253,44 @@ def fetch_kiro():
     return provider
 
 
+LOCAL_PROVIDERS = (KIRO_PROVIDER, OPENCODE_GO_PROVIDER)
+
+
 def fetch_quota(env=None, providers_filter=None):
-    """Fetch quota-axi providers and, when requested, Kiro, in parallel.
-    providers_filter=None means "all": every quota-axi provider plus Kiro if
-    kiro-cli is installed."""
+    """Fetch quota-axi providers and the providers it cannot read itself (Kiro,
+    OpenCode Go) in parallel. providers_filter=None means "all": every
+    quota-axi provider plus Kiro if kiro-cli is installed."""
     if providers_filter is None:
         want_kiro = shutil.which(KIRO_CLI) is not None
+        want_go = True
         axi_filter, want_axi = None, True
     else:
         want_kiro = KIRO_PROVIDER in providers_filter
-        axi_filter = [p for p in providers_filter if p != KIRO_PROVIDER]
+        want_go = OPENCODE_GO_PROVIDER in providers_filter
+        axi_filter = [p for p in providers_filter if p not in LOCAL_PROVIDERS]
         want_axi = bool(axi_filter)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         kiro_future = pool.submit(fetch_kiro) if want_kiro else None
+        go_future = pool.submit(fetch_opencode_go) if want_go else None
         if want_axi:
             data, error = fetch_quota_axi(env=env, providers_filter=axi_filter)
         else:
             data, error = {"providers": []}, None
-        kiro = kiro_future.result() if kiro_future else None
+        local = [f.result() for f in (kiro_future, go_future) if f]
 
-    if error or kiro is None:
+    if error:
         return data, error
-    providers = list(data.get("providers", []))
+    # quota-axi may report a provider we read ourselves (an unscoped run
+    # returns every provider it knows); ours is the reading that worked.
+    ours = {entry["provider"] for entry in local}
+    providers = [p for p in data.get("providers", []) if p.get("provider") not in ours]
     # Keep the user's requested order (e.g. --providers kiro,codex).
     order = providers_filter or []
-    idx = order.index(KIRO_PROVIDER) if KIRO_PROVIDER in order else len(providers)
-    after = set(order[idx + 1:])
-    insert_at = next((i for i, p in enumerate(providers) if p.get("provider") in after), len(providers))
-    providers.insert(insert_at, kiro)
+    for entry in local:
+        after = set(order[order.index(entry["provider"]) + 1:]) if entry["provider"] in order else set()
+        at = next((i for i, p in enumerate(providers) if p.get("provider") in after), len(providers))
+        providers.insert(at, entry)
     return {**data, "providers": providers}, None
 
 
@@ -242,6 +337,15 @@ def fmt_relative(iso_ts):
 
 
 INNER = 32  # visible content width between the two box-drawing borders
+
+# A status entry is narrow and read at a glance, so long provider ids get a
+# short display alias. Filtering (--providers) still uses the full id; only
+# what is drawn changes.
+PROVIDER_LABELS = {"opencode-go": "opencode"}
+
+
+def display_name(provider):
+    return PROVIDER_LABELS.get(provider, provider)
 
 # A provider quota-axi could not read still gets reported; "NA" alone hides
 # whether it is signed out, waiting on a Keychain consent dialog, or simply
@@ -295,7 +399,7 @@ def render(data, error, providers_filter=None):
             lines.append(_row("no matching providers"))
 
         for p in providers:
-            name = p.get("provider", "?")
+            name = display_name(p.get("provider", "?"))
             state = p.get("state", {})
 
             tag = unreadable_tag(state)
@@ -329,7 +433,7 @@ def render(data, error, providers_filter=None):
     return "\n".join(lines)
 
 
-DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "kiro"]
+DEFAULT_PROVIDERS = ["claude", "codex", "copilot", "kiro", "opencode-go"]
 
 
 # Default: show every window kind a provider reports, no filtering.
@@ -371,7 +475,7 @@ def render_line(data, error, providers_filter=None, window_kinds=DEFAULT_WINDOW_
 
     parts = []
     for p in providers:
-        name = p.get("provider", "?")
+        name = display_name(p.get("provider", "?"))
         state = p.get("state", {})
         tag = unreadable_tag(state)
         if tag:

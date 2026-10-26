@@ -1,1 +1,1 @@
-claude,codex,copilot,kiro
+claude,codex,copilot,kiro,opencode-go

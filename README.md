@@ -1,6 +1,6 @@
 # Herdr quota meter
 
-Show your remaining AI subscription quotas in Herdr, either in a pane or in the top-right tab bar. The meter uses [`quota-axi`](https://github.com/kunchenguid/quota-axi) to read quotas with your existing local provider sign-ins. It reads Kiro separately through `kiro-cli`.
+Show your remaining AI subscription quotas in Herdr, either in a pane or in the top-right tab bar. The meter uses [`quota-axi`](https://github.com/kunchenguid/quota-axi) to read quotas with your existing local provider sign-ins. It reads Kiro separately through `kiro-cli`, and OpenCode Go from the credential opencode itself stores.
 
 ![Live Herdr tab bar with the quota meter](assets/herdr-quota-status.png)
 
@@ -36,6 +36,7 @@ You do not need to copy tokens into the plugin. The meter reuses the local sign-
 | GitHub Copilot | `copilot` | Copilot `apps.json`, the Copilot CLI secure store on macOS, or a token in the GitHub CLI's `hosts.yml`. A GitHub CLI login alone does not guarantee access. |
 | Cursor | `cursor` | Cursor editor sign-in or supported `cursor-agent` credentials. |
 | Kiro | `kiro` | `kiro-cli` installed on `PATH` and signed in with `kiro-cli login`. |
+| OpenCode Go | `opencode-go` | An opencode 2.x sign-in to OpenCode Console (`opencode auth login opencode`), read from `~/.local/share/opencode/opencode.db`. `OPENCODE_DB` and `XDG_DATA_HOME` are honored. |
 
 For other providers and custom credential locations, see the [provider documentation for quota-axi 0.1.55](https://unpkg.com/quota-axi@0.1.55/README.md).
 
@@ -45,7 +46,7 @@ Inspect which sign-ins quota-axi can find without printing secret values:
 npx --yes --package=quota-axi@0.1.55 quota-axi auth
 ```
 
-This command does not inspect Kiro. If you use Kiro, sign in through `kiro-cli` separately.
+This command does not inspect Kiro or OpenCode Go. If you use Kiro, sign in through `kiro-cli` separately; if you use OpenCode Go, sign in through `opencode auth login opencode`.
 
 If a provider needs secure-store access, run this in an interactive terminal. Replace the provider list with your own quota-axi provider IDs:
 
@@ -53,7 +54,7 @@ If a provider needs secure-store access, run this in an interactive terminal. Re
 npx --yes --package=quota-axi@0.1.55 quota-axi --provider claude,copilot --allow-keychain-prompt
 ```
 
-Review and approve the access request yourself. On macOS, quota-axi documents using "Always Allow" for later background reads. The meter does not request approval itself. Do not include `kiro` in quota-axi commands.
+Review and approve the access request yourself. On macOS, quota-axi documents using "Always Allow" for later background reads. The meter does not request approval itself. Do not include `kiro` or `opencode-go` in quota-axi commands: the meter reads those two itself.
 
 The meter inherits its process environment. If your setup uses custom locations such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`, Herdr must receive those variables too. Variables set only in another terminal do not reach an already-running Herdr process.
 
@@ -63,7 +64,7 @@ The meter inherits its process environment. If your setup uses custom locations 
 herdr plugin pane open --plugin quota-meter --entrypoint quota
 ```
 
-The pane refreshes every 60 seconds and requests all supported providers. Kiro is included only when `kiro-cli` is on `PATH`. This is not a scan of Herdr's configured agents: quota-axi uses its own supported local sign-in sources.
+The pane refreshes every 60 seconds and requests all supported providers. Kiro is included only when `kiro-cli` is on `PATH`; OpenCode Go whenever an opencode sign-in is stored. This is not a scan of Herdr's configured agents: quota-axi uses its own supported local sign-in sources.
 
 The provider list for the tab bar is separate. Follow the next section to show only the providers you use.
 
@@ -80,7 +81,7 @@ herdr plugin config-dir quota-meter
 Open `providers.txt` inside the directory returned by the last command. On first setup, it contains:
 
 ```text
-claude,codex,copilot,kiro
+claude,codex,copilot,kiro,opencode-go
 ```
 
 Replace that line with the IDs of the providers you use, separated by commas. For example, for Claude Code and Codex:
@@ -89,7 +90,7 @@ Replace that line with the IDs of the providers you use, separated by commas. Fo
 claude,codex
 ```
 
-Use `claude,codex,cursor` to include Cursor, or `all` to request every supported provider, plus Kiro when installed. Adding an ID only selects that provider. Its local sign-in must still be available.
+Use `claude,codex,cursor` to include Cursor, or `all` to request every supported provider, plus Kiro when installed and OpenCode Go when signed in. Adding an ID only selects that provider. Its local sign-in must still be available.
 
 Now run the setup action again to generate a command with your chosen providers:
 
@@ -186,9 +187,17 @@ quota-axi does not support Kiro, so the meter reads it itself through the offici
 - Every `kiro-cli chat` call saves an empty session. The meter runs it from `~/.cache/herdr-quota-meter/kiro-cwd` and afterwards deletes only zero-message sessions in that directory, so your project session lists are untouched.
 - Credits used beyond the plan allowance show as `0%`.
 
+## OpenCode Go
+
+OpenCode Go is not read through quota-axi. opencode 2.x keeps one credential per integration and serves the Go plan from the same `opencode` (OpenCode Console) credential as Zen, while quota-axi only accepts a separate `opencode-go` credential row. The meter therefore reads the key opencode itself would use, read-only, from the `credential` table in `~/.local/share/opencode/opencode.db`, and asks `https://opencode.ai/zen/go/v1/usage` for the plan's rolling, weekly and monthly caps. It shows them as `opencode 100%/5h 100%/7d 100%/30d`.
+
+- Sign-in: `opencode auth login opencode`. No separate Go login exists, so the Go subscription attached to that account is what these windows meter.
+- The vendor reports consumption, so the meter draws what is left. A failed read shows `err?`; a missing sign-in shows `auth?`, never a full bar.
+- The key is sent only to that endpoint, as a bearer token, with no cookie jar and no proxy configuration of its own.
+
 ## Data and credentials
 
-The meter does not itself read or write credentials. It passes inherited environment variables to quota-axi, which may read provider credential files or secure stores and may delegate a refresh to a provider's own CLI under its documented conditions. No credentials are written into plugin files. Review quota-axi's [safety guarantees](https://github.com/kunchenguid/quota-axi#safety-guarantees) and provider-specific behavior before use.
+The meter reads one credential itself: the opencode key described above, read-only and never printed or cached. Otherwise it passes inherited environment variables to quota-axi, which may read provider credential files or secure stores and may delegate a refresh to a provider's own CLI under its documented conditions. No credentials are written into plugin files. Review quota-axi's [safety guarantees](https://github.com/kunchenguid/quota-axi#safety-guarantees) and provider-specific behavior before use.
 
 ## Remove
 
